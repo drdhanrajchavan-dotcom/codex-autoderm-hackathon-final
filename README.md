@@ -6,6 +6,10 @@ Built during OpenAI Codex Community Hackathon, Bengaluru, April 16, 2026. Solo s
 
 All code, docs, web app surfaces, training/inference scripts, deployment scaffolding, and autoresearch artifacts in this repository were produced during the April 16, 2026 hackathon build; the only pre-existing project work was the clinical image annotation effort.
 
+## Limited Autoresearch Result
+
+Even under the limited hackathon autoresearch loop, the official kept checkpoint improved locked_eval scored mAP50-95 from 0.0379 to 0.0812: a +0.0433 absolute lift, or 2.14x over the cropped baseline. research_val scored mAP50-95 improved from 0.0522 to 0.1210: a +0.0688 absolute lift, or 2.32x. The kept model also raised locked_eval nodule/cyst recall from 0.4231 to 0.5000, meeting the clinical safety floor.
+
 ## Product Surfaces
 
 - **Doctor:** Upload a single clinical photo or a before/after pair, then review lesion boxes, counts, deltas, and the GAGS severity badge.
