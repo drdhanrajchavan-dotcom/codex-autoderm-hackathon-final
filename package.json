@@ -10,13 +10,14 @@
   "dependencies": {
     "next": "latest",
     "react": "latest",
+    "react-diff-viewer": "latest",
     "react-dom": "latest",
-    "tailwindcss": "latest",
-    "recharts": "latest",
     "react-dropzone": "latest",
-    "react-diff-viewer": "latest"
+    "recharts": "latest",
+    "tailwindcss": "latest"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
     "@types/node": "latest",
     "@types/react": "latest",
     "typescript": "latest"

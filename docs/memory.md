@@ -38,4 +38,5 @@
 - Research tab polls active checkpoint and iteration data every 30 seconds, shows checkpoint status, latest kept iteration status, a Recharts validation scatter plot, sortable iteration table, and per-run artifact detail pages.
 - Demo photos under `web/public/demo_photos/` are the operator-approved public ACNE04 samples only: `levle0_151.jpg`, `levle0_156.jpg`, `levle0_491.jpg`, `levle1_33.jpg`, `levle1_129.jpg`, and `levle1_191.jpg`.
 - Do not add or replace demo acne photos without explicit operator approval.
+- Tailwind v4 requires `web/postcss.config.mjs` with `@tailwindcss/postcss`; without it, the app renders as raw unstyled HTML.
 - Local smoke verification passed with `npm run build`, `scripts/dev.sh` route/API checks, and `/api/infer` on the approved demo samples.
