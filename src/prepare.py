@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.metadata
 import inspect
 import json
+import os
 import random
 import shutil
+import urllib.request
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +26,60 @@ from .types import ALL_CLASSES
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 SPLITS = ("train", "research_val", "locked_eval")
 SOURCE_SPLIT_NAMES = {"train", "val", "valid", "validation", "test", "research_val", "locked_eval"}
+LEFT_CHEEK_LANDMARKS = (58, 93, 132, 136, 172, 234)
+RIGHT_CHEEK_LANDMARKS = (288, 323, 361, 365, 397, 454)
+FACE_ANCHOR_LANDMARKS = (
+    10,
+    21,
+    54,
+    58,
+    67,
+    93,
+    103,
+    109,
+    127,
+    132,
+    136,
+    148,
+    149,
+    150,
+    152,
+    162,
+    172,
+    176,
+    234,
+    251,
+    284,
+    288,
+    297,
+    323,
+    332,
+    338,
+    356,
+    361,
+    365,
+    377,
+    378,
+    379,
+    389,
+    397,
+    400,
+    454,
+)
+FACE_MESH_NOSE_TIP = 1
+FACE_MESH_MOUTH_CENTER = 13
+FACE_MESH_DETECT_MAX_SIDE = 1024
+FACE_LANDMARKER_TASK_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
+FACE_LANDMARKER_TASK_ENV = "AUTODERM_FACE_LANDMARKER_TASK"
+CHEEK_CROP_MIN_SHORT_SIDE_FRACTION = 0.46
+CHEEK_CROP_MAX_SHORT_SIDE_FRACTION = 0.72
+CHEEK_CROP_FACE_WIDTH_FRACTION = 0.92
+CHEEK_CROP_FACE_HEIGHT_FRACTION = 0.72
+CHEEK_CROP_YAW_THRESHOLD = 0.08
+
+
+_FACE_MESH_DETECTOR: object | None = None
+_FACE_MESH_UNAVAILABLE = False
 
 
 @dataclass(frozen=True)
@@ -32,6 +89,18 @@ class SourceRecord:
     patient_id: str
     output_stem: str
     class_counts: dict[str, int]
+
+
+@dataclass(frozen=True)
+class CropDecision:
+    box: tuple[int, int, int, int]
+    method: str
+
+
+@dataclass(frozen=True)
+class FaceMeshDetector:
+    backend: str
+    detector: object
 
 
 def _is_image(path: Path) -> bool:
@@ -385,13 +454,226 @@ def _write_split_reports(
     (output_dir / "per_photo_region_counts.tsv").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _clamped_square_crop_box(width: int, height: int, center_x: float, center_y: float, side: float) -> tuple[int, int, int, int]:
+    crop_side = max(1, min(width, height, round(side)))
+    left = round(center_x - crop_side / 2)
+    top = round(center_y - crop_side / 2)
+    left = min(max(0, left), max(0, width - crop_side))
+    top = min(max(0, top), max(0, height - crop_side))
+    return left, top, left + crop_side, top + crop_side
+
+
 def _face_region_crop_box(width: int, height: int) -> tuple[int, int, int, int]:
     side = min(width, height)
-    crop_width = max(1, round(side * 0.90))
-    crop_height = max(1, round(side * 0.90))
-    left = max(0, round((width - crop_width) / 2))
-    top = max(0, round((height - crop_height) / 2))
-    return left, top, min(width, left + crop_width), min(height, top + crop_height)
+    crop_side = max(1, round(side * CHEEK_CROP_MAX_SHORT_SIDE_FRACTION))
+    return _clamped_square_crop_box(width, height, width / 2, height / 2, crop_side)
+
+
+def _face_landmarker_task_path(download: bool = False) -> Path | None:
+    configured = os.environ.get(FACE_LANDMARKER_TASK_ENV)
+    if configured:
+        path = Path(configured).expanduser().resolve()
+        return path if path.exists() else None
+
+    cache_path = Path.home() / ".cache" / "autoderm" / "face_landmarker.task"
+    if cache_path.exists():
+        return cache_path
+    if not download:
+        return None
+
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = cache_path.with_suffix(".task.tmp")
+        urllib.request.urlretrieve(FACE_LANDMARKER_TASK_URL, tmp_path)
+        tmp_path.replace(cache_path)
+    except Exception:
+        return None
+    return cache_path if cache_path.exists() else None
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _legacy_face_mesh_class() -> object | None:
+    try:
+        import mediapipe as mp
+    except ImportError:
+        return None
+
+    solutions = getattr(mp, "solutions", None)
+    face_mesh = getattr(solutions, "face_mesh", None) if solutions is not None else None
+    return getattr(face_mesh, "FaceMesh", None) if face_mesh is not None else None
+
+
+def _face_mesh_dependency_signature(allow_download: bool = False) -> str:
+    try:
+        version = importlib.metadata.version("mediapipe")
+    except importlib.metadata.PackageNotFoundError:
+        return "mediapipe=unavailable"
+
+    if _legacy_face_mesh_class() is not None:
+        return f"mediapipe={version};backend=solutions.face_mesh"
+
+    task_path = _face_landmarker_task_path(download=allow_download)
+    if task_path is None:
+        return f"mediapipe={version};backend=center_fallback;face_landmarker_task=missing"
+    return f"mediapipe={version};backend=tasks.FaceLandmarker;face_landmarker_task_sha256={_file_sha256(task_path)}"
+
+
+def _face_mesh_detector() -> FaceMeshDetector | None:
+    global _FACE_MESH_DETECTOR, _FACE_MESH_UNAVAILABLE
+    if _FACE_MESH_UNAVAILABLE:
+        return None
+    if _FACE_MESH_DETECTOR is not None:
+        return _FACE_MESH_DETECTOR
+
+    legacy_face_mesh = _legacy_face_mesh_class()
+    if legacy_face_mesh is not None:
+        _FACE_MESH_DETECTOR = FaceMeshDetector(
+            backend="solutions.face_mesh",
+            detector=legacy_face_mesh(
+                static_image_mode=True,
+                max_num_faces=1,
+                refine_landmarks=False,
+                min_detection_confidence=0.45,
+            ),
+        )
+        return _FACE_MESH_DETECTOR
+
+    task_path = _face_landmarker_task_path(download=True)
+    if task_path is None:
+        _FACE_MESH_UNAVAILABLE = True
+        return None
+
+    try:
+        from mediapipe.tasks.python import vision
+        from mediapipe.tasks.python.core import base_options as base_options_module
+    except ImportError:
+        _FACE_MESH_UNAVAILABLE = True
+        return None
+
+    options = vision.FaceLandmarkerOptions(
+        base_options=base_options_module.BaseOptions(model_asset_path=str(task_path)),
+        num_faces=1,
+        min_face_detection_confidence=0.45,
+        min_face_presence_confidence=0.45,
+    )
+    _FACE_MESH_DETECTOR = FaceMeshDetector(
+        backend="tasks.FaceLandmarker",
+        detector=vision.FaceLandmarker.create_from_options(options),
+    )
+    return _FACE_MESH_DETECTOR
+
+
+def _face_mesh_input_array(image: object) -> object:
+    import numpy as np
+
+    width, height = image.size  # type: ignore[attr-defined]
+    max_side = max(width, height)
+    if max_side > FACE_MESH_DETECT_MAX_SIDE:
+        scale = FACE_MESH_DETECT_MAX_SIDE / max_side
+        image = image.resize((max(1, round(width * scale)), max(1, round(height * scale))))  # type: ignore[attr-defined]
+    return np.ascontiguousarray(np.asarray(image))
+
+
+def _detect_face_mesh_landmarks(image: object) -> list[tuple[float, float]] | None:
+    detector = _face_mesh_detector()
+    if detector is None:
+        return None
+
+    width, height = image.size  # type: ignore[attr-defined]
+    image_array = _face_mesh_input_array(image)
+
+    if detector.backend == "solutions.face_mesh":
+        result = detector.detector.process(image_array)
+        if not getattr(result, "multi_face_landmarks", None):
+            return None
+        landmarks = result.multi_face_landmarks[0].landmark
+        return [(point.x * width, point.y * height) for point in landmarks]
+
+    if detector.backend == "tasks.FaceLandmarker":
+        try:
+            import mediapipe as mp
+        except ImportError:
+            return None
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_array)
+        result = detector.detector.detect(mp_image)
+        if not getattr(result, "face_landmarks", None):
+            return None
+        landmarks = result.face_landmarks[0]
+        return [(point.x * width, point.y * height) for point in landmarks]
+
+    return None
+
+
+def _mean_landmark(landmarks: list[tuple[float, float]], indexes: tuple[int, ...]) -> tuple[float, float]:
+    points = [landmarks[index] for index in indexes if index < len(landmarks)]
+    if not points:
+        raise ValueError("No requested face-mesh landmarks are available.")
+    return sum(x for x, _ in points) / len(points), sum(y for _, y in points) / len(points)
+
+
+def _cheek_region_crop_box_from_landmarks(
+    width: int,
+    height: int,
+    landmarks: list[tuple[float, float]],
+) -> tuple[int, int, int, int]:
+    anchors = [landmarks[index] for index in FACE_ANCHOR_LANDMARKS if index < len(landmarks)]
+    if not anchors:
+        return _face_region_crop_box(width, height)
+
+    min_x = min(x for x, _ in anchors)
+    max_x = max(x for x, _ in anchors)
+    min_y = min(y for _, y in anchors)
+    max_y = max(y for _, y in anchors)
+    face_width = max(1.0, max_x - min_x)
+    face_height = max(1.0, max_y - min_y)
+    face_center_x = (min_x + max_x) / 2
+
+    left_cheek = _mean_landmark(landmarks, LEFT_CHEEK_LANDMARKS)
+    right_cheek = _mean_landmark(landmarks, RIGHT_CHEEK_LANDMARKS)
+    nose = landmarks[FACE_MESH_NOSE_TIP] if FACE_MESH_NOSE_TIP < len(landmarks) else (face_center_x, (min_y + max_y) / 2)
+
+    yaw = (nose[0] - face_center_x) / face_width
+    if abs(yaw) <= CHEEK_CROP_YAW_THRESHOLD:
+        cheek_center_x = (left_cheek[0] + right_cheek[0]) / 2
+        cheek_center_y = (left_cheek[1] + right_cheek[1]) / 2
+    else:
+        left_distance = abs(nose[0] - left_cheek[0])
+        right_distance = abs(right_cheek[0] - nose[0])
+        visible_cheek = left_cheek if left_distance >= right_distance else right_cheek
+        cheek_center_x = visible_cheek[0] * 0.82 + nose[0] * 0.18
+        cheek_center_y = visible_cheek[1]
+
+    mouth = landmarks[FACE_MESH_MOUTH_CENTER] if FACE_MESH_MOUTH_CENTER < len(landmarks) else (cheek_center_x, max_y)
+    center_y = cheek_center_y * 0.78 + mouth[1] * 0.22
+
+    short_side = min(width, height)
+    crop_side = max(face_width * CHEEK_CROP_FACE_WIDTH_FRACTION, face_height * CHEEK_CROP_FACE_HEIGHT_FRACTION)
+    crop_side = max(crop_side, short_side * CHEEK_CROP_MIN_SHORT_SIDE_FRACTION)
+    crop_side = min(crop_side, short_side * CHEEK_CROP_MAX_SHORT_SIDE_FRACTION)
+    return _clamped_square_crop_box(width, height, cheek_center_x, center_y, crop_side)
+
+
+def _cheek_region_crop_box(image: object) -> CropDecision:
+    width, height = image.size  # type: ignore[attr-defined]
+    landmarks = _detect_face_mesh_landmarks(image)
+    if landmarks is None:
+        return CropDecision(_face_region_crop_box(width, height), "center_fallback")
+    return CropDecision(_cheek_region_crop_box_from_landmarks(width, height, landmarks), "face_mesh_cheek")
+
+
+def _crop_summary_payload(preprocessing_hash: str, crop_methods: Counter[str]) -> dict:
+    return {
+        "preprocessing_hash": preprocessing_hash,
+        "crop_methods": dict(sorted(crop_methods.items())),
+        "face_mesh_dependency": _face_mesh_dependency_signature(),
+    }
 
 
 def _validate_class_id(class_id: int) -> None:
@@ -460,7 +742,7 @@ def _transform_label_line(line: str, crop_box: tuple[int, int, int, int], origin
     raise ValueError(f"Unsupported YOLO OBB label format: {line}")
 
 
-def _crop_image_and_label(source_image: Path, source_label: Path | None, destination_image: Path, destination_label: Path) -> None:
+def _crop_image_and_label(source_image: Path, source_label: Path | None, destination_image: Path, destination_label: Path) -> str:
     try:
         from PIL import Image
     except ImportError as exc:
@@ -468,7 +750,8 @@ def _crop_image_and_label(source_image: Path, source_label: Path | None, destina
 
     with Image.open(source_image) as image:
         image = image.convert("RGB")
-        crop_box = _face_region_crop_box(*image.size)
+        crop_decision = _cheek_region_crop_box(image)
+        crop_box = crop_decision.box
         cropped = image.crop(crop_box)
         cropped.save(destination_image)
         original_size = image.size
@@ -481,6 +764,7 @@ def _crop_image_and_label(source_image: Path, source_label: Path | None, destina
                 transformed_lines.append(transformed)
 
     destination_label.write_text("\n".join(transformed_lines) + ("\n" if transformed_lines else ""), encoding="utf-8")
+    return crop_decision.method
 
 
 def _copy_image_and_label(source_image: Path, source_label: Path | None, destination_image: Path, destination_label: Path) -> None:
@@ -494,11 +778,23 @@ def _copy_image_and_label(source_image: Path, source_label: Path | None, destina
 def _preprocessing_hash(apply_face_crop: bool, split_seed: int) -> str:
     source = "\n".join(
         [
+            inspect.getsource(_clamped_square_crop_box),
             inspect.getsource(_face_region_crop_box),
+            inspect.getsource(_face_landmarker_task_path),
+            inspect.getsource(_file_sha256),
+            inspect.getsource(_legacy_face_mesh_class),
+            inspect.getsource(_face_mesh_dependency_signature),
+            inspect.getsource(_face_mesh_detector),
+            inspect.getsource(_face_mesh_input_array),
+            inspect.getsource(_detect_face_mesh_landmarks),
+            inspect.getsource(_mean_landmark),
+            inspect.getsource(_cheek_region_crop_box_from_landmarks),
+            inspect.getsource(_cheek_region_crop_box),
             inspect.getsource(_transform_label_line),
             inspect.getsource(_crop_image_and_label),
             inspect.getsource(_copy_image_and_label),
             f"apply_face_crop={apply_face_crop}",
+            f"face_mesh_dependency={_face_mesh_dependency_signature(allow_download=apply_face_crop) if apply_face_crop else 'not_used'}",
             f"split_seed={split_seed}",
         ]
     )
@@ -534,6 +830,7 @@ def prepare_dataset(source_dir: str, output_dir: str, split_seed: int = 42, appl
         (output_path / split / "preprocessing_hash.txt").write_text(preprocessing_hash + "\n", encoding="utf-8")
 
     records_by_split = {split: [] for split in SPLITS}
+    crop_methods: Counter[str] = Counter()
     for record in records:
         group_id = _record_group_id(record, image_level_groups)
         split = split_by_group[group_id]
@@ -541,11 +838,16 @@ def prepare_dataset(source_dir: str, output_dir: str, split_seed: int = 42, appl
         destination_image = output_path / split / "images" / f"{record.output_stem}{record.image_path.suffix.lower()}"
         destination_label = output_path / split / "labels" / f"{record.output_stem}.txt"
         if apply_face_crop:
-            _crop_image_and_label(record.image_path, record.label_path, destination_image, destination_label)
+            crop_methods[_crop_image_and_label(record.image_path, record.label_path, destination_image, destination_label)] += 1
         else:
             _copy_image_and_label(record.image_path, record.label_path, destination_image, destination_label)
 
     (output_path / "preprocessing_hash.txt").write_text(preprocessing_hash + "\n", encoding="utf-8")
+    if apply_face_crop:
+        (output_path / "crop_summary.json").write_text(
+            json.dumps(_crop_summary_payload(preprocessing_hash, crop_methods), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     _write_dataset_yaml(output_path)
     _write_split_reports(output_path, records_by_split, split_strategy, split_seed)
     return preprocessing_hash
@@ -555,7 +857,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Prepare an immutable AutoDerm dataset split.")
     parser.add_argument("--source", required=True, help="Source directory containing images and YOLO OBB labels.")
     parser.add_argument("--output", required=True, help="Prepared output directory, e.g. data/uncropped.")
-    parser.add_argument("--apply-face-crop", action="store_true", help="Apply the deterministic face-region crop.")
+    parser.add_argument("--apply-face-crop", action="store_true", help="Apply the deterministic cheek-region crop.")
     parser.add_argument("--seed", type=int, default=42, help="Patient-level split seed.")
     args = parser.parse_args()
 

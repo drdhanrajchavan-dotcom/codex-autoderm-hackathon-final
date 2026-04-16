@@ -5,3 +5,4 @@ uvicorn
 pydantic
 pytest
 python-multipart
+mediapipe

@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Optional
 
 
-BASE_MODEL_WEIGHTS = "yolov8n-obb.pt"
-IMAGE_SIZE = 768
+BASE_MODEL_WEIGHTS = "yolo26l-obb.pt"
+IMAGE_SIZE = 512
 MAX_EPOCHS = 80
 BATCH_SIZE = 8
 EARLY_STOP_PATIENCE = 12
@@ -214,7 +214,7 @@ def train(data_yaml: str, output_dir: str, budget_seconds: int) -> tuple[Optiona
         imgsz=IMAGE_SIZE,
         batch=BATCH_SIZE,
         patience=EARLY_STOP_PATIENCE,
-        time=max(1, budget_seconds) / 60,
+        time=max(1, budget_seconds) / 3600,
         workers=WORKERS,
         device=DEVICE,
         cache=CACHE_IMAGES,
