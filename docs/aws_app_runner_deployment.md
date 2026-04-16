@@ -36,26 +36,27 @@ For the hackathon public demo:
 
 App Runner is simpler than EC2 for this demo because it provides HTTPS, deployment management, logs, and autoscaling without managing a server. The caveat is that App Runner is CPU/container hosting, not GPU hosting. If YOLO inference latency needs a GPU, use EC2 G5/G6 with Docker and a reverse proxy instead.
 
-## Repo Changes Needed Before Launch
+## Implemented App Runner Readiness
 
-The current app is local-first:
+Implemented on 2026-04-16:
 
-- Next.js runs on `localhost:3000`.
-- FastAPI runs on `localhost:8000`.
-- The frontend defaults to `http://localhost:8000` for API calls.
-- API CORS currently allows local development.
-- The model checkpoint is read from local `config/active_checkpoint.json`.
+- `scripts/start_prod.sh` starts FastAPI on `127.0.0.1:8000` and Next.js on `0.0.0.0:3000`.
+- `web/next.config.mjs` proxies same-origin `/api/*` and `/healthz` requests to FastAPI.
+- Frontend API calls default to same-origin paths instead of `localhost`.
+- FastAPI exposes `/healthz` and rejects image uploads above the configured limit. The default public-demo cap is 8 MB per image.
+- `Dockerfile` builds a CPU App Runner image with the official KEEP checkpoint only.
+- `.dockerignore` excludes private data, full pullback artifacts, source datasets, training runs, and local environments.
+- The image generates local-only `config/active_checkpoint.json` for official KEEP run `iter_018` during build.
+- The image includes only the selected `iter_018` `best.pt`, preprocessing hash, and minimal non-PHI iteration metadata from `.pulled_artifacts/runs/`.
 
-Before public deployment:
+Local verification completed with:
 
-1. Add a production start script that starts FastAPI on `127.0.0.1:8000` and Next.js on `0.0.0.0:3000`.
-2. Add a Next.js rewrite so browser requests to `/api/*` proxy internally to FastAPI.
-3. Set public frontend API calls to same-origin `/api`, not `localhost`.
-4. Add a lightweight `/healthz` endpoint.
-5. Add a `Dockerfile` and `.dockerignore`.
-6. Keep `config/active_checkpoint.json` untracked.
-7. Include only the selected non-PHI model artifact in the private deployment image, or fetch it from private S3 at startup.
-8. Add upload size limits and public-demo abuse guardrails before opening the app broadly.
+```bash
+npm run build
+venv/bin/python -m pytest
+venv/bin/python -m scripts.check_release
+docker buildx build --platform linux/amd64 -t autoderm-demo:local --load .
+```
 
 ## AWS Setup Flow
 

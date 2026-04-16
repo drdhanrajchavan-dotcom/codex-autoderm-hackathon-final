@@ -6,6 +6,7 @@ import csv
 import io
 import json
 import math
+import os
 import re
 import threading
 from dataclasses import dataclass
@@ -25,12 +26,26 @@ ACTIVE_CHECKPOINT_PATH = REPO_ROOT / "config" / "active_checkpoint.json"
 PULLED_ARTIFACTS_DIR = REPO_ROOT / ".pulled_artifacts"
 RUNS_DIR = PULLED_ARTIFACTS_DIR / "runs"
 CONFIDENCE_THRESHOLD = 0.40
+DEFAULT_MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 NO_ACTIVE_CHECKPOINT = {
     "error": "no active checkpoint",
     "message": "Baselines may still be running. Check Research tab.",
 }
 VALID_PREPROCESSING = {"uncropped", "cropped"}
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+MAX_UPLOAD_BYTES = _env_int("AUTODERM_MAX_UPLOAD_BYTES", DEFAULT_MAX_UPLOAD_BYTES)
 
 
 app = FastAPI(title="AutoDerm Demo API")
@@ -290,14 +305,18 @@ def _preprocess_image(image: object, preprocessing: str) -> tuple[object, tuple[
 
 
 async def _read_upload_image(upload: UploadFile) -> object:
+    content = await upload.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        limit_mb = MAX_UPLOAD_BYTES / (1024 * 1024)
+        raise HTTPException(status_code=413, detail=f"image upload exceeds {limit_mb:g} MB limit")
+    if not content:
+        raise HTTPException(status_code=400, detail="empty upload")
+
     try:
         from PIL import Image
     except ImportError as exc:
         raise RuntimeError("Pillow is required for image upload handling") from exc
 
-    content = await upload.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="empty upload")
     try:
         with Image.open(io.BytesIO(content)) as image:
             return image.convert("RGB")
@@ -668,6 +687,16 @@ def _tail_text(path: Path, line_count: int = 50) -> str:
         return ""
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     return "\n".join(lines[-line_count:])
+
+
+@app.get("/healthz")
+def healthz() -> dict[str, Any]:
+    checkpoint = _active_checkpoint()
+    return {
+        "status": "ok",
+        "active_checkpoint": checkpoint is not None,
+        "weights_exists": bool(checkpoint and checkpoint.weights_path.exists()),
+    }
 
 
 @app.get("/api/active_checkpoint")

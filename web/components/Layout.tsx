@@ -24,17 +24,17 @@ export default function Layout({ activeTab, children, pageTitle = "AutoDerm" }: 
     tabs.find((tab) => router.pathname === tab.href || router.pathname.startsWith(`${tab.href}/`))?.id;
 
   return (
-    <div className="min-h-screen bg-[#f8faf6] text-stone-950">
+    <div className="autoderm-shell min-h-screen text-stone-950">
       <Head>
         <title>{pageTitle}</title>
       </Head>
-      <header className="sticky top-0 z-20 border-b border-stone-200 bg-[#f8faf6]/95 backdrop-blur">
-        <div className="mx-auto flex min-h-16 w-full max-w-6xl flex-col gap-3 px-4 py-3 sm:px-6 md:flex-row md:items-center md:justify-between">
+      <header className="autoderm-header sticky top-0 z-20">
+        <div className="mx-auto flex min-h-16 w-full max-w-7xl flex-col gap-3 px-4 py-3 sm:px-6 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-wrap items-center gap-4">
-            <Link href="/doctor" className="text-xl font-bold tracking-normal text-stone-950">
+            <Link href="/doctor" className="autoderm-brand text-xl font-bold tracking-normal text-stone-950">
               AutoDerm
             </Link>
-            <nav aria-label="Primary navigation" className="flex flex-wrap gap-2">
+            <nav aria-label="Primary navigation" className="autoderm-tabs flex flex-wrap gap-1">
               {tabs.map((tab) => {
                 const isActive = selectedTab === tab.id;
                 return (
@@ -42,11 +42,20 @@ export default function Layout({ activeTab, children, pageTitle = "AutoDerm" }: 
                     key={tab.id}
                     href={tab.href}
                     aria-current={isActive ? "page" : undefined}
+                    style={
+                      isActive
+                        ? {
+                            background: "linear-gradient(135deg, #123f37, #16634f 58%, #0f766e)",
+                            color: "#ffffff",
+                            textShadow: "0 1px 1px rgba(0, 0, 0, 0.24)",
+                          }
+                        : undefined
+                    }
                     className={[
                       "rounded-md px-3 py-2 text-sm font-medium transition",
                       isActive
-                        ? "bg-emerald-700 text-white"
-                        : "text-stone-700 hover:bg-rose-100 hover:text-stone-950",
+                        ? "bg-stone-950 text-white"
+                        : "text-stone-700 hover:bg-white hover:text-stone-950",
                     ].join(" ")}
                   >
                     {tab.label}
@@ -55,12 +64,12 @@ export default function Layout({ activeTab, children, pageTitle = "AutoDerm" }: 
               })}
             </nav>
           </div>
-          <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-stone-800">
+          <p className="autoderm-safety-pill rounded-md px-3 py-2 text-sm font-medium text-stone-800">
             Research demo, not a diagnostic tool
           </p>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">{children}</main>
+      <main className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6">{children}</main>
     </div>
   );
 }

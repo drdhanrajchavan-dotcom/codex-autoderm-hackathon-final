@@ -1,8 +1,10 @@
+import asyncio
+import io
 import json
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, UploadFile
 from fastapi.testclient import TestClient
 
 from src import api_server
@@ -168,6 +170,32 @@ def test_inference_checkpoint_endpoint_lists_usable_and_unusable_runs(tmp_path, 
     assert options["iter_018"]["usable"] is True
     assert options["iter_022"]["usable"] is False
     assert options["iter_022"]["unusable_reason"] == "missing weights"
+
+
+def test_healthz_reports_active_checkpoint_state(tmp_path, monkeypatch):
+    runs_dir, active_checkpoint_path = _configure_paths(tmp_path, monkeypatch)
+    _make_run(runs_dir, "iter_018", decision="KEEP")
+    _write_active_checkpoint(active_checkpoint_path, "iter_018")
+
+    client = TestClient(api_server.app)
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "active_checkpoint": True,
+        "weights_exists": True,
+    }
+
+
+def test_read_upload_image_rejects_oversized_upload(monkeypatch):
+    monkeypatch.setattr(api_server, "MAX_UPLOAD_BYTES", 4)
+    upload = UploadFile(file=io.BytesIO(b"abcde"), filename="too-large.jpg")
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(api_server._read_upload_image(upload))
+
+    assert exc.value.status_code == 413
 
 
 def test_infer_uses_active_checkpoint_when_iteration_id_is_omitted(tmp_path, monkeypatch):

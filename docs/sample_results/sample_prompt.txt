@@ -1,0 +1,42 @@
+You are mutating AutoDerm's src/train.py for one bounded autoresearch iteration.
+
+Return exactly:
+1. A single line starting with RESEARCH_NOTE: that explains in <=120 words which research prior or prior failure pattern motivated the mutation.
+2. A unified diff against src/train.py.
+
+Constraints:
+- Mutate only src/train.py.
+- Keep every tunable choice as top-level module constants.
+- Favor generalization under the held-out-primary rule.
+- Do not touch preprocessing, splits, or locked_eval integrity.
+- Do research-backed work only: each mutation must be connected to the research-backed priors below or to a measured failure in the full experiment memory.
+- Do not import outside training code or copy external implementations; keep src/train.py Codex-authored and bounded.
+
+Immediate operator priority:
+- Explore higher training image resolution for small acne lesion detection.
+- Prefer trying IMAGE_SIZE around 768 or 1024 soon, with BATCH_SIZE adjusted only if needed for A10G memory.
+- Preserve the clinical guardrails: locked_eval nodule_cyst recall must remain at least 0.50, and locked_eval remains the primary keep signal.
+- Keep the actual implementation as your own bounded src/train.py diff.
+
+Research-backed priors:
+- Small-object detection fails when the object occupies too few pixels after downsampling; prioritize preserving lesion detail with higher input resolution, restrained destructive augmentation, and multi-scale-friendly settings.
+- Feature Pyramid Networks showed that combining high-resolution lower-level features with semantic higher-level features improves detection across object scales.
+- Focal Loss was designed for dense detectors under severe foreground/background and class imbalance.
+- Acne object-detection studies report severe acne-class imbalance; rare severe lesions can be a tiny fraction of boxes.
+
+Current reference metrics:
+- research_val_scored_map50_95: 0.05216926768026558
+- locked_eval_scored_map50_95: 0.037870647353228024
+- locked_eval_nodule_cyst_recall: 0.4230769230769231
+
+Program contract:
+- locked_eval_scored_map50_95 must not regress by more than 0.005.
+- research_val_scored_map50_95 must improve by at least 0.003, OR locked_eval_scored_map50_95 must improve by at least 0.005.
+- locked_eval_nodule_cyst_recall must remain at least 0.50.
+- No locked_eval class precision may drop by more than 0.10 absolute from the reference.
+- When research_val and locked_eval disagree, locked_eval wins.
+
+Representative loop memory:
+- baseline_cropped: research_val=0.0522, locked_eval=0.0379, nodule_cyst_recall=0.4231.
+- iter_012: research_val=0.1051 and locked_eval=0.0747, but nodule_cyst_recall=0.3462, so it was discarded.
+- Higher resolution helped aggregate signal, but destructive augmentation and rare-class imbalance remained clinical risks.

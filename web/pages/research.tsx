@@ -59,7 +59,7 @@ type ResearchPageProps = {
   demoPhotos: DemoPhoto[];
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 const POLL_MS = 30_000;
 
 const decisionColors: Record<ExperimentRow["decision"], string> = {

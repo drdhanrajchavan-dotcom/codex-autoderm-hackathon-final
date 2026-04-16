@@ -28,7 +28,7 @@ type LesionCard = {
   body: string;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
 const badgeClasses: Record<HayashiBadge, string> = {
   clear: "border-emerald-300 bg-emerald-50 text-emerald-900",
@@ -124,13 +124,16 @@ function UploadArea({ onSelect }: { onSelect: (file: File) => void }) {
     <div
       {...getRootProps()}
       className={[
-        "flex min-h-44 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed px-4 py-6 text-center transition",
+        "autoderm-dropzone flex min-h-52 cursor-pointer flex-col items-center justify-center rounded-md border px-5 py-8 text-center transition",
         isDragActive
-          ? "border-emerald-600 bg-emerald-50"
-          : "border-stone-300 bg-white hover:border-rose-300 hover:bg-rose-50",
+          ? "border-emerald-500 bg-emerald-50"
+          : "border-stone-300 bg-white hover:border-stone-400",
       ].join(" ")}
     >
       <input {...getInputProps()} />
+      <span className="autoderm-upload-mark mb-4" aria-hidden="true">
+        +
+      </span>
       <p className="text-base font-semibold text-stone-950">Upload one clinical photo</p>
       <p className="mt-2 max-w-sm text-sm text-stone-600">
         Drag a photo here, or click to choose an image.
@@ -182,16 +185,25 @@ function SampleButtons({
     <div className="space-y-3">
       <p className="text-sm font-semibold text-stone-700">Try a sample</p>
       {demoPhotos.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex gap-3 overflow-x-auto pb-2">
           {demoPhotos.map((photo) => (
             <button
               key={photo.url}
               type="button"
               onClick={() => void selectSample(photo)}
-              className="rounded-md border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-800 hover:border-emerald-600 hover:text-emerald-800 disabled:cursor-wait disabled:opacity-70"
+              className="autoderm-sample-tile group w-36 shrink-0 rounded-md border border-stone-300 bg-white p-2 text-left text-sm font-medium text-stone-800 hover:border-emerald-600 hover:text-emerald-800 disabled:cursor-wait disabled:opacity-70"
               disabled={loadingUrl === photo.url}
             >
-              {loadingUrl === photo.url ? "Loading..." : photo.label}
+              <span className="block aspect-[4/3] overflow-hidden rounded-md bg-stone-100">
+                <img
+                  src={photo.url}
+                  alt=""
+                  className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.04]"
+                />
+              </span>
+              <span className="mt-2 block truncate">
+                {loadingUrl === photo.url ? "Loading..." : photo.label}
+              </span>
             </button>
           ))}
         </div>
@@ -351,14 +363,13 @@ function DermatologistGuidance({ response }: { response: InferenceResponse }) {
   );
 }
 
-function ResultSections({ response }: { response: InferenceResponse }) {
+function ResultDetails({ response }: { response: InferenceResponse }) {
   return (
-    <div className="space-y-4">
-      <WhatWeFound response={response} />
+    <div className="grid gap-4 lg:grid-cols-3">
       <LesionTypesExplained response={response} />
       <CareGuidance response={response} />
       <DermatologistGuidance response={response} />
-      <p className="rounded-md border border-amber-300 bg-amber-50 px-5 py-4 text-lg font-semibold leading-8 text-stone-950">
+      <p className="rounded-md border border-amber-300 bg-amber-50 px-5 py-4 text-base font-semibold leading-7 text-stone-950 lg:col-span-3">
         Research demonstration, not a medical diagnosis. Educational only. Not a substitute for evaluation by a
         qualified dermatologist.
       </p>
@@ -461,12 +472,15 @@ export default function PatientPage({ demoPhotos }: PatientPageProps) {
         </div>
 
         {hasResult && selection && response ? (
-          <div className="grid gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
-            <div className="space-y-3">
-              <OverlayCanvas imageUrl={selection.url} detections={response.detections} labelMode="patient" />
-              <OverlayLegend mode="patient" />
+          <div className="space-y-5">
+            <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.65fr)] lg:items-start">
+              <div className="space-y-3">
+                <OverlayCanvas imageUrl={selection.url} detections={response.detections} labelMode="patient" />
+                <OverlayLegend mode="patient" />
+              </div>
+              <WhatWeFound response={response} />
             </div>
-            <ResultSections response={response} />
+            <ResultDetails response={response} />
           </div>
         ) : null}
       </div>

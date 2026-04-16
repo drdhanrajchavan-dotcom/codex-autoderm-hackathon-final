@@ -7,7 +7,7 @@ import type { ExperimentRow, IterationDetail } from "../../../lib/types";
 
 const ReactDiffViewer = dynamic(() => import("react-diff-viewer"), { ssr: false });
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
 function formatNumber(value: unknown, digits = 4) {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "-";

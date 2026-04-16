@@ -1,0 +1,42 @@
+{
+  "crashed": false,
+  "decision": "KEEP",
+  "discard_reason": null,
+  "locked_eval_nodule_cyst_recall": 0.5,
+  "locked_eval_per_class_precision": {
+    "comedone_closed": 0.0,
+    "comedone_open": 0.5,
+    "nodule_cyst": 0.21311475409836064,
+    "papule": 0.4484848484848485,
+    "pustule": 0.6571428571428571
+  },
+  "locked_eval_per_class_recall": {
+    "comedone_closed": 0.0,
+    "comedone_open": 0.0380952380952381,
+    "nodule_cyst": 0.5,
+    "papule": 0.46540880503144655,
+    "pustule": 0.23232323232323232
+  },
+  "locked_eval_scored_map50_95": 0.08117795691007532,
+  "notes": "",
+  "preprocessing_hash": "6a4caf0ca14f91ec7e0981d38076402170f9e1710d5c19ed5f616487b9bc1187",
+  "research_val_per_class_precision": {
+    "comedone_closed": 0.0,
+    "comedone_open": 0.45454545454545453,
+    "nodule_cyst": 0.3090909090909091,
+    "papule": 0.4626865671641791,
+    "pustule": 0.6458333333333334
+  },
+  "research_val_per_class_recall": {
+    "comedone_closed": 0.0,
+    "comedone_open": 0.049019607843137254,
+    "nodule_cyst": 0.68,
+    "papule": 0.4025974025974026,
+    "pustule": 0.3263157894736842
+  },
+  "research_val_scored_map50_95": 0.12096613426577767,
+  "run_id": "iter_018",
+  "timeout": true,
+  "timestamp": "2026-04-16T08:36:36.843715+00:00",
+  "train_duration_seconds": 300.00975614399977
+}

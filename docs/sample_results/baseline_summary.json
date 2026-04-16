@@ -1,0 +1,9 @@
+{
+  "chosen": "cropped",
+  "chosen_data_yaml_path": "data/cropped/dataset.yaml",
+  "chosen_experiment_row_path": "runs/baseline_cropped/experiment_row.json",
+  "chosen_weights_path": "runs/baseline_cropped/weights/best.pt",
+  "cropped_locked_eval": 0.037870647353228024,
+  "timestamp": "2026-04-16T07:22:56.483477+00:00",
+  "uncropped_locked_eval": 0.023492275253707305
+}
