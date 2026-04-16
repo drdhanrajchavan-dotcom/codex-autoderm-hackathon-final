@@ -10,9 +10,15 @@
   "dependencies": {
     "next": "latest",
     "react": "latest",
+    "react-dom": "latest",
     "tailwindcss": "latest",
     "recharts": "latest",
     "react-dropzone": "latest",
     "react-diff-viewer": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "typescript": "latest"
   }
 }

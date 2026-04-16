@@ -1,9 +1,19 @@
 # Demo Photo License Notes
 
-Intended source: ACNE04, the public research dataset referenced by the original LDL repository:
+These demo photos are operator-selected public ACNE04 samples distributed with the LDL project:
 
-- https://github.com/xpwu95/LDL
+- Dataset/code page: https://github.com/xpwu95/LDL
+- Paper: "Joint Acne Image Grading and Counting via Label Distribution Learning", ICCV 2019.
 
-Upstream note from that source: the ACNE04 dataset is free for academic usage, and non-academic usage requires separate permission from the dataset author.
+The upstream LDL README states that ACNE04 is free for academic usage and asks users to contact Xiaoping Wu for other purposes. These images are included here only for this research demo and hackathon judging context.
 
-Because this repository is intended to be public-safe, raw ACNE04 images are intentionally not committed in this initial scaffold until redistribution terms are explicitly cleared for public Git hosting.
+Do not add other acne photos to this directory without explicit operator approval.
+
+Selected files:
+
+- `levle0_151.jpg`
+- `levle0_156.jpg`
+- `levle0_491.jpg`
+- `levle1_33.jpg`
+- `levle1_129.jpg`
+- `levle1_191.jpg`

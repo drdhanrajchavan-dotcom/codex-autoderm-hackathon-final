@@ -27,3 +27,15 @@
 
 - `src/train.py` uses Ultralytics `time` in hours, so budget seconds must be converted with `budget_seconds / 3600`.
 - `locked_eval` remains the primary keep signal and must not be referenced by Ultralytics training-time validation.
+
+## 2026-04-16 Track C Demo Build
+
+- Track C web demo is implemented in `web/` with Next.js pages for Doctor, Patient, Research, and iteration detail views.
+- `src/api_server.py` provides the FastAPI backend for active checkpoint status, single-image inference, before/after inference, iteration listings, and iteration artifacts.
+- `scripts/dev.sh` starts both services: FastAPI on port 8000 and Next.js on port 3000.
+- Doctor tab supports single-photo and pre/post comparison workflows, approved sample-photo buttons, YOLO inference calls, lesion overlays, counts, Hayashi badge, and deterministic clinical observation text.
+- Patient tab supports the same single-photo/sample flow, overlay rendering, plain-language findings, lesion-type explanations, placeholder care guidance, dermatologist guidance, and the research demo disclaimer.
+- Research tab polls active checkpoint and iteration data every 30 seconds, shows checkpoint status, latest kept iteration status, a Recharts validation scatter plot, sortable iteration table, and per-run artifact detail pages.
+- Demo photos under `web/public/demo_photos/` are the operator-approved public ACNE04 samples only: `levle0_151.jpg`, `levle0_156.jpg`, `levle0_491.jpg`, `levle1_33.jpg`, `levle1_129.jpg`, and `levle1_191.jpg`.
+- Do not add or replace demo acne photos without explicit operator approval.
+- Local smoke verification passed with `npm run build`, `scripts/dev.sh` route/API checks, and `/api/infer` on the approved demo samples.
