@@ -1,9 +1,11 @@
 # Standard
 node_modules/
+web/.next/
 venv/
 __pycache__/
 .env
 *.pyc
+.DS_Store
 
 # Private data and artifacts (never committed)
 data/

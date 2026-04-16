@@ -27,3 +27,25 @@
 
 - `src/train.py` uses Ultralytics `time` in hours, so budget seconds must be converted with `budget_seconds / 3600`.
 - `locked_eval` remains the primary keep signal and must not be referenced by Ultralytics training-time validation.
+
+## 2026-04-16 Track C Demo Build
+
+- Track C web demo is implemented in `web/` with Next.js pages for Doctor, Patient, Research, and iteration detail views.
+- `src/api_server.py` provides the FastAPI backend for active checkpoint status, single-image inference, before/after inference, iteration listings, and iteration artifacts.
+- `scripts/dev.sh` starts both services: FastAPI on port 8000 and Next.js on port 3000.
+- Doctor tab supports single-photo and pre/post comparison workflows, approved sample-photo buttons, YOLO inference calls, lesion overlays, counts, Hayashi badge, and deterministic clinical observation text.
+- Patient tab supports the same single-photo/sample flow, overlay rendering, plain-language findings, lesion-type explanations, placeholder care guidance, dermatologist guidance, and the research demo disclaimer.
+- Research tab polls active checkpoint and iteration data every 30 seconds, shows checkpoint status, latest kept iteration status, a Recharts validation scatter plot, sortable iteration table, and per-run artifact detail pages.
+- Demo photos under `web/public/demo_photos/` are the operator-approved public ACNE04 samples only: `levle0_151.jpg`, `levle0_156.jpg`, `levle0_491.jpg`, `levle1_33.jpg`, `levle1_129.jpg`, and `levle1_191.jpg`.
+- Do not add or replace demo acne photos without explicit operator approval.
+- Tailwind v4 requires `web/postcss.config.mjs` with `@tailwindcss/postcss`; without it, the app renders as raw unstyled HTML.
+- Local smoke verification passed with `npm run build`, `scripts/dev.sh` route/API checks, and `/api/infer` on the approved demo samples.
+
+## 2026-04-16 AWS Public Demo Plan
+
+- Local read-only AWS checks confirmed the machine is AWS-ready: AWS CLI works, default region is `ap-south-1`, caller identity succeeds, the configured IAM user has `AdministratorAccess`, App Runner/ECR/EC2 are reachable, a default VPC exists, and Docker is installed.
+- The recommended public hackathon path is Docker image -> private ECR -> AWS App Runner public HTTPS URL.
+- Keep tracked deployment docs public-safe: do not hard-code AWS account IDs, credentials, private bucket names, PHI, patient images, or model artifacts.
+- App Runner is CPU/container hosting. If the demo requires GPU inference latency, use EC2 G5/G6 with Docker and a reverse proxy instead.
+- Before launch, add production container files, same-origin API routing, a health endpoint, upload limits, and private checkpoint/model artifact handling.
+- Detailed sanitized deployment steps live in `docs/aws_app_runner_deployment.md`.
