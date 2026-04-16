@@ -67,15 +67,17 @@ FACE_ANCHOR_LANDMARKS = (
     454,
 )
 FACE_MESH_NOSE_TIP = 1
-FACE_MESH_MOUTH_CENTER = 13
 FACE_MESH_DETECT_MAX_SIDE = 1024
 FACE_LANDMARKER_TASK_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
 FACE_LANDMARKER_TASK_ENV = "AUTODERM_FACE_LANDMARKER_TASK"
-CHEEK_CROP_MIN_SHORT_SIDE_FRACTION = 0.46
-CHEEK_CROP_MAX_SHORT_SIDE_FRACTION = 0.72
-CHEEK_CROP_FACE_WIDTH_FRACTION = 0.92
-CHEEK_CROP_FACE_HEIGHT_FRACTION = 0.72
-CHEEK_CROP_YAW_THRESHOLD = 0.08
+FACE_CLOSEUP_FALLBACK_SHORT_SIDE_FRACTION = 0.82
+FACE_CLOSEUP_MIN_WIDTH_SHORT_SIDE_FRACTION = 0.58
+FACE_CLOSEUP_MIN_HEIGHT_SHORT_SIDE_FRACTION = 0.66
+FACE_CLOSEUP_MAX_WIDTH_SHORT_SIDE_FRACTION = 0.84
+FACE_CLOSEUP_MAX_HEIGHT_SHORT_SIDE_FRACTION = 0.92
+FACE_CLOSEUP_SIDE_MARGIN_FRACTION = 0.12
+FACE_CLOSEUP_TOP_MARGIN_FRACTION = 0.18
+FACE_CLOSEUP_BOTTOM_MARGIN_FRACTION = 0.08
 
 
 _FACE_MESH_DETECTOR: object | None = None
@@ -465,8 +467,48 @@ def _clamped_square_crop_box(width: int, height: int, center_x: float, center_y:
 
 def _face_region_crop_box(width: int, height: int) -> tuple[int, int, int, int]:
     side = min(width, height)
-    crop_side = max(1, round(side * CHEEK_CROP_MAX_SHORT_SIDE_FRACTION))
+    crop_side = max(1, round(side * FACE_CLOSEUP_FALLBACK_SHORT_SIDE_FRACTION))
     return _clamped_square_crop_box(width, height, width / 2, height / 2, crop_side)
+
+
+def _clamped_rect_crop_box(width: int, height: int, left: float, top: float, right: float, bottom: float) -> tuple[int, int, int, int]:
+    crop_width = max(1, min(width, round(right - left)))
+    crop_height = max(1, min(height, round(bottom - top)))
+    crop_left = round((left + right) / 2 - crop_width / 2)
+    crop_top = round((top + bottom) / 2 - crop_height / 2)
+    crop_left = min(max(0, crop_left), max(0, width - crop_width))
+    crop_top = min(max(0, crop_top), max(0, height - crop_height))
+    return crop_left, crop_top, crop_left + crop_width, crop_top + crop_height
+
+
+def _expand_crop_bounds(
+    width: int,
+    height: int,
+    left: float,
+    top: float,
+    right: float,
+    bottom: float,
+) -> tuple[int, int, int, int]:
+    short_side = min(width, height)
+    target_width = right - left
+    target_height = bottom - top
+    min_width = short_side * FACE_CLOSEUP_MIN_WIDTH_SHORT_SIDE_FRACTION
+    min_height = short_side * FACE_CLOSEUP_MIN_HEIGHT_SHORT_SIDE_FRACTION
+    max_width = short_side * FACE_CLOSEUP_MAX_WIDTH_SHORT_SIDE_FRACTION
+    max_height = short_side * FACE_CLOSEUP_MAX_HEIGHT_SHORT_SIDE_FRACTION
+    target_width = min(max(target_width, min_width), max_width, width)
+    target_height = min(max(target_height, min_height), max_height, height)
+
+    center_x = (left + right) / 2
+    center_y = (top + bottom) / 2
+    return _clamped_rect_crop_box(
+        width,
+        height,
+        center_x - target_width / 2,
+        center_y - target_height / 2,
+        center_x + target_width / 2,
+        center_y + target_height / 2,
+    )
 
 
 def _face_landmarker_task_path(download: bool = False) -> Path | None:
@@ -633,31 +675,19 @@ def _cheek_region_crop_box_from_landmarks(
     max_y = max(y for _, y in anchors)
     face_width = max(1.0, max_x - min_x)
     face_height = max(1.0, max_y - min_y)
-    face_center_x = (min_x + max_x) / 2
 
-    left_cheek = _mean_landmark(landmarks, LEFT_CHEEK_LANDMARKS)
-    right_cheek = _mean_landmark(landmarks, RIGHT_CHEEK_LANDMARKS)
-    nose = landmarks[FACE_MESH_NOSE_TIP] if FACE_MESH_NOSE_TIP < len(landmarks) else (face_center_x, (min_y + max_y) / 2)
+    nose = [landmarks[FACE_MESH_NOSE_TIP]] if FACE_MESH_NOSE_TIP < len(landmarks) else []
+    protected_points = anchors + nose
+    protected_min_x = min(x for x, _ in protected_points)
+    protected_max_x = max(x for x, _ in protected_points)
+    protected_min_y = min(y for _, y in protected_points)
+    protected_max_y = max(y for _, y in protected_points)
 
-    yaw = (nose[0] - face_center_x) / face_width
-    if abs(yaw) <= CHEEK_CROP_YAW_THRESHOLD:
-        cheek_center_x = (left_cheek[0] + right_cheek[0]) / 2
-        cheek_center_y = (left_cheek[1] + right_cheek[1]) / 2
-    else:
-        left_distance = abs(nose[0] - left_cheek[0])
-        right_distance = abs(right_cheek[0] - nose[0])
-        visible_cheek = left_cheek if left_distance >= right_distance else right_cheek
-        cheek_center_x = visible_cheek[0] * 0.82 + nose[0] * 0.18
-        cheek_center_y = visible_cheek[1]
-
-    mouth = landmarks[FACE_MESH_MOUTH_CENTER] if FACE_MESH_MOUTH_CENTER < len(landmarks) else (cheek_center_x, max_y)
-    center_y = cheek_center_y * 0.78 + mouth[1] * 0.22
-
-    short_side = min(width, height)
-    crop_side = max(face_width * CHEEK_CROP_FACE_WIDTH_FRACTION, face_height * CHEEK_CROP_FACE_HEIGHT_FRACTION)
-    crop_side = max(crop_side, short_side * CHEEK_CROP_MIN_SHORT_SIDE_FRACTION)
-    crop_side = min(crop_side, short_side * CHEEK_CROP_MAX_SHORT_SIDE_FRACTION)
-    return _clamped_square_crop_box(width, height, cheek_center_x, center_y, crop_side)
+    left = protected_min_x - face_width * FACE_CLOSEUP_SIDE_MARGIN_FRACTION
+    right = protected_max_x + face_width * FACE_CLOSEUP_SIDE_MARGIN_FRACTION
+    top = protected_min_y - face_height * FACE_CLOSEUP_TOP_MARGIN_FRACTION
+    bottom = protected_max_y + face_height * FACE_CLOSEUP_BOTTOM_MARGIN_FRACTION
+    return _expand_crop_bounds(width, height, left, top, right, bottom)
 
 
 def _cheek_region_crop_box(image: object) -> CropDecision:
@@ -665,7 +695,7 @@ def _cheek_region_crop_box(image: object) -> CropDecision:
     landmarks = _detect_face_mesh_landmarks(image)
     if landmarks is None:
         return CropDecision(_face_region_crop_box(width, height), "center_fallback")
-    return CropDecision(_cheek_region_crop_box_from_landmarks(width, height, landmarks), "face_mesh_cheek")
+    return CropDecision(_cheek_region_crop_box_from_landmarks(width, height, landmarks), "face_mesh_closeup")
 
 
 def _crop_summary_payload(preprocessing_hash: str, crop_methods: Counter[str]) -> dict:
@@ -780,6 +810,8 @@ def _preprocessing_hash(apply_face_crop: bool, split_seed: int) -> str:
         [
             inspect.getsource(_clamped_square_crop_box),
             inspect.getsource(_face_region_crop_box),
+            inspect.getsource(_clamped_rect_crop_box),
+            inspect.getsource(_expand_crop_bounds),
             inspect.getsource(_face_landmarker_task_path),
             inspect.getsource(_file_sha256),
             inspect.getsource(_legacy_face_mesh_class),
