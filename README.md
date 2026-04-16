@@ -4,6 +4,8 @@ AutoDerm is a clinician-assist system for acne severity grading on Indian and da
 
 Built during OpenAI Codex Community Hackathon, Bengaluru, April 16, 2026. Solo submission by Dhanraj Chavan, MD, ClearSkin Private Limited.
 
+All code, docs, web app surfaces, training/inference scripts, deployment scaffolding, and autoresearch artifacts in this repository were produced during the April 16, 2026 hackathon build; the only pre-existing project work was the clinical image annotation effort.
+
 ## Product Surfaces
 
 - **Doctor:** Upload a single clinical photo or a before/after pair, then review lesion boxes, counts, deltas, and the GAGS severity badge.
