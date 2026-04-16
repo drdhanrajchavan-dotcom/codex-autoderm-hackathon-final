@@ -12,6 +12,13 @@ weights/
 .pulled_artifacts/
 config/active_checkpoint.json
 source_data/
+cvat-labelled-exports-obb/
+datasets/
+*.tar.gz
+*.tar.gz.sha256
+DATASET_IMPORT.md
+EC2_TRANSFER.md
+scripts/prepare_yolo_obb_dataset.py
 
 # TRACKED EXCEPTIONS (do NOT gitignore these):
 # web/public/demo_photos/  — publishable ACNE04 sample images for "Try a sample" buttons
