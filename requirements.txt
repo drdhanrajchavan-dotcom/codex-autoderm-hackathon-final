@@ -1,0 +1,7 @@
+ultralytics
+torch
+fastapi
+uvicorn
+pydantic
+pytest
+python-multipart

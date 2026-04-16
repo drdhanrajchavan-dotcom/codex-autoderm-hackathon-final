@@ -1,0 +1,19 @@
+# Standard
+node_modules/
+venv/
+__pycache__/
+.env
+*.pyc
+
+# Private data and artifacts (never committed)
+data/
+runs/
+weights/
+.pulled_artifacts/
+config/active_checkpoint.json
+source_data/
+
+# TRACKED EXCEPTIONS (do NOT gitignore these):
+# web/public/demo_photos/  — publishable ACNE04 sample images for "Try a sample" buttons
+# docs/sample_results/     — curated non-PHI iteration examples for judges
+# config/active_checkpoint.example.json — schema template

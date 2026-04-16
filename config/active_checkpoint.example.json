@@ -1,0 +1,5 @@
+{
+  "weights_path": ".pulled_artifacts/runs/baseline_cropped/weights/best.pt",
+  "preprocessing": "cropped",
+  "iteration_id": "baseline_cropped"
+}
