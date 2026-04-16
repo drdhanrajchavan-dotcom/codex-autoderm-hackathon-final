@@ -23,6 +23,6 @@ EC2_TRANSFER.md
 scripts/prepare_yolo_obb_dataset.py
 
 # TRACKED EXCEPTIONS (do NOT gitignore these):
-# web/public/demo_photos/  — publishable ACNE04 sample images for "Try a sample" buttons
+# web/public/demo_photos/  — publishable sample images for "Try a sample" buttons
 # docs/sample_results/     — curated non-PHI iteration examples for judges
 # config/active_checkpoint.example.json — schema template
