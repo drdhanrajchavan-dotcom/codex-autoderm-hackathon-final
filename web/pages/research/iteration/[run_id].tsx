@@ -201,7 +201,7 @@ export default function IterationPage() {
   }, [runId]);
 
   return (
-    <Layout activeTab="research">
+    <Layout activeTab="research" pageTitle="AutoDerm — Iteration">
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-semibold tracking-normal text-stone-950">

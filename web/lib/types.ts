@@ -11,6 +11,7 @@ export type ScoredClass = (typeof SCORED_CLASSES)[number];
 export type AnyClass = (typeof ALL_CLASSES)[number];
 
 export type HayashiBadge = "clear" | "almost_clear" | "mild" | "moderate" | "severe";
+export type ExperimentDecision = "KEEP" | "DISCARD" | "FAILED" | "PENDING_KEEP_RULE";
 
 export interface Detection {
   class_name: AnyClass;
@@ -27,7 +28,7 @@ export interface InferenceResponse {
 export interface ExperimentRow {
   run_id: string;
   timestamp: string;
-  decision: "KEEP" | "DISCARD" | "FAILED" | "PENDING_KEEP_RULE";
+  decision: ExperimentDecision;
   discard_reason: string | null;
   research_val_scored_map50_95: number;
   locked_eval_scored_map50_95: number;
@@ -50,6 +51,38 @@ export interface ActiveCheckpoint {
   preprocessing: "uncropped" | "cropped" | null;
   iteration_id: string | null;
   weights_exists: boolean;
+}
+
+export interface InferenceCheckpointOption {
+  run_id: string;
+  decision: ExperimentDecision;
+  discard_reason: string | null;
+  timestamp: string;
+  research_val_scored_map50_95: number;
+  locked_eval_scored_map50_95: number;
+  locked_eval_nodule_cyst_recall: number;
+  preprocessing: "uncropped" | "cropped" | null;
+  weights_path: string | null;
+  weight_file: string | null;
+  weights_exists: boolean;
+  usable: boolean;
+  unusable_reason: string | null;
+  official_keep: boolean;
+  exploratory_only: boolean;
+}
+
+export interface IterationCompareResponse {
+  iteration_a: InferenceCheckpointOption;
+  iteration_b: InferenceCheckpointOption;
+  a: InferenceResponse;
+  b: InferenceResponse;
+  deltas: {
+    counts_diff: Record<AnyClass, number>;
+    badge_change: {
+      from: HayashiBadge;
+      to: HayashiBadge;
+    };
+  };
 }
 
 export interface IterationDetail {

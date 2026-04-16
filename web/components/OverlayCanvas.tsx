@@ -6,7 +6,10 @@ type OverlayCanvasProps = {
   imageUrl: string;
   detections: Detection[];
   confidenceFloor?: number;
+  labelMode?: OverlayLabelMode;
 };
+
+export type OverlayLabelMode = "technical" | "patient" | "none";
 
 type Point = {
   x: number;
@@ -20,6 +23,15 @@ const classColors: Record<Detection["class_name"], { stroke: string; fill: strin
   pustule: { stroke: "#dc2626", fill: "rgba(220, 38, 38, 0.9)", alpha: 1 },
   nodule_cyst: { stroke: "#7e22ce", fill: "rgba(126, 34, 206, 0.9)", alpha: 1 },
   post_acne_mark: { stroke: "#6b7280", fill: "rgba(107, 114, 128, 0.7)", alpha: 0.5 },
+};
+
+const patientLabels: Record<Detection["class_name"], string> = {
+  comedone_open: "blocked pore",
+  comedone_closed: "blocked pore",
+  papule: "inflamed spot",
+  pustule: "inflamed spot",
+  nodule_cyst: "deep inflamed spot",
+  post_acne_mark: "skin mark",
 };
 
 function rotatedBox([x1, y1, x2, y2, angle]: Detection["bbox"]): Point[] {
@@ -63,10 +75,21 @@ function drawLabel(
   context.fillText(text, x + paddingX, y);
 }
 
+function detectionLabel(detection: Detection, labelMode: OverlayLabelMode) {
+  if (labelMode === "none") {
+    return null;
+  }
+  if (labelMode === "patient") {
+    return patientLabels[detection.class_name];
+  }
+  return `${detection.class_name} ${detection.confidence.toFixed(2)}`;
+}
+
 export default function OverlayCanvas({
   imageUrl,
   detections,
   confidenceFloor = 0.4,
+  labelMode = "technical",
 }: OverlayCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -120,17 +143,20 @@ export default function OverlayCanvas({
             }
             return topLeft;
           }, points[0]);
-          drawLabel(
-            context,
-            `${detection.class_name} ${detection.confidence.toFixed(2)}`,
-            labelPoint,
-            colors.fill,
-            detection.class_name === "post_acne_mark",
-          );
+          const label = detectionLabel(detection, labelMode);
+          if (label) {
+            drawLabel(
+              context,
+              label,
+              labelPoint,
+              colors.fill,
+              detection.class_name === "post_acne_mark",
+            );
+          }
         });
     };
     image.src = imageUrl;
-  }, [confidenceFloor, detections, imageUrl]);
+  }, [confidenceFloor, detections, imageUrl, labelMode]);
 
   return (
     <canvas

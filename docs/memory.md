@@ -36,7 +36,7 @@
 - Doctor tab supports single-photo and pre/post comparison workflows, approved sample-photo buttons, YOLO inference calls, lesion overlays, counts, Hayashi badge, and deterministic clinical observation text.
 - Patient tab supports the same single-photo/sample flow, overlay rendering, plain-language findings, lesion-type explanations, placeholder care guidance, dermatologist guidance, and the research demo disclaimer.
 - Research tab polls active checkpoint and iteration data every 30 seconds, shows checkpoint status, latest kept iteration status, a Recharts validation scatter plot, sortable iteration table, and per-run artifact detail pages.
-- Demo photos under `web/public/demo_photos/` are the operator-approved public ACNE04 samples only: `levle0_151.jpg`, `levle0_156.jpg`, `levle0_491.jpg`, `levle1_33.jpg`, `levle1_129.jpg`, and `levle1_191.jpg`.
+- Demo photos under `web/public/demo_photos/` are operator-approved edited/anonymized fresh clinical examples with sanitized filenames. Do not include original export filenames, patient identifiers, PHI, or unapproved clinical photos.
 - Do not add or replace demo acne photos without explicit operator approval.
 - Tailwind v4 requires `web/postcss.config.mjs` with `@tailwindcss/postcss`; without it, the app renders as raw unstyled HTML.
 - Local smoke verification passed with `npm run build`, `scripts/dev.sh` route/API checks, and `/api/infer` on the approved demo samples.
@@ -49,3 +49,14 @@
 - App Runner is CPU/container hosting. If the demo requires GPU inference latency, use EC2 G5/G6 with Docker and a reverse proxy instead.
 - Before launch, add production container files, same-origin API routing, a health endpoint, upload limits, and private checkpoint/model artifact handling.
 - Detailed sanitized deployment steps live in `docs/aws_app_runner_deployment.md`.
+
+## 2026-04-16 Demo Finalization Notes
+
+- Operator provided edited/anonymized fresh pre/post acne photos that were not used in training, research_val, or locked_eval.
+- Old ACNE04 sample images were removed from `web/public/demo_photos/` because they were not representative for the target Indian clinical audience.
+- Fresh demo photos were copied into `web/public/demo_photos/` using sanitized `fresh_*` filenames only; original export filenames and identifying strings must not be committed or shown in the UI.
+- Doctor, Patient, and Research sample labels now use generic labels such as `Fresh sample 1` and `Pair 2 before`.
+- Doctor pre/post mode includes quick demo-pair loading buttons for Pair 1, Pair 2, Pair 4, and Pair 5.
+- Fresh-image comparison favored `iter_036` for the live demo: locked_eval mAP50-95 `0.11603729217218721`, locked_eval nodule/cyst recall `0.6538461538461539`, and fresh Pair 2 moved from inflammatory count `9` / moderate to `0` / clear.
+- `iter_036` remains a discarded autoresearch row under the strict keep rule because pustule precision drop was `0.1081`, slightly above the `0.10` limit. Use this honestly in the Research story if asked: it is an operator-promoted demo checkpoint, not an official kept loop winner.
+- Local `config/active_checkpoint.json` was promoted to `iter_036`, but this file remains local-only and gitignored by project policy.

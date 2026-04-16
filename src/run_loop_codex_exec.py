@@ -25,6 +25,30 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 TRAIN_PATH = REPO_ROOT / "src" / "train.py"
 PROGRAM_PATH = REPO_ROOT / "docs" / "program.md"
 CODEx_RETRY_DELAY_SECONDS = 30
+MAX_CODEX_NOTE_CHARS = 2000
+
+RESEARCH_BACKED_PRIORS = """Research-backed operating priors for this loop:
+- Small-object detection fails when the object occupies too few pixels after downsampling; prioritize preserving lesion detail with higher input resolution, restrained destructive augmentation, and multi-scale-friendly settings.
+- Feature Pyramid Networks showed that combining high-resolution lower-level features with semantic higher-level features improves detection across object scales. For YOLO training knobs, favor changes that help small lesions remain visible without destroying context.
+- Focal Loss was designed for dense detectors under severe foreground/background and class imbalance. For this YOLO recipe, use this as support for careful class-loss, focal-gamma, and rare-class sampling moves, especially around nodule_cyst recall.
+- Skin-lesion work on small, imbalanced datasets reports benefit from moderate-complexity models, regularization, augmentation, and imbalance-aware loss/sampling rather than simply making every knob larger.
+- Acne object-detection studies report severe acne-class imbalance; rare severe lesions can be a tiny fraction of boxes. Treat locked_eval nodule_cyst recall as a clinical safety constraint, not a metric to trade away for aggregate mAP.
+- Do not do random hyperparameter wandering. Every mutation should name the paper-backed prior or the observed failure pattern it addresses.
+
+Seed references:
+- Lin et al., Feature Pyramid Networks for Object Detection, CVPR 2017, https://arxiv.org/abs/1612.03144
+- Lin et al., Focal Loss for Dense Object Detection, ICCV 2017, https://arxiv.org/abs/1708.02002
+- Yao et al., Single Model Deep Learning on Imbalanced Small Datasets for Skin Lesion Classification, IEEE TMI 2021, https://arxiv.org/abs/2102.01284
+- Automatic Acne Object Detection and Acne Severity Grading with Smartphone Images, Diagnostics 2022, https://doi.org/10.3390/diagnostics12081879
+- Survey of small object detection, Journal of Image and Graphics 2023, https://www.cjig.cn/en/article/doi/10.11834/jig.220455
+"""
+
+MANUAL_DIAGNOSTIC_FINDINGS = """Manual visual/error diagnostic from cropped locked_eval samples:
+- Official kept iter_018 is clinically safer but conservative: it misses most comedones and many pustules on difficult images.
+- Stronger high-resolution candidates recover more aggregate signal, but they often over-predict nodule_cyst or trade away comedone_open/pustule precision.
+- On sampled difficult images at confidence 0.25, iter_018 found only 2/86 open comedones, 0/68 closed comedones, 7/35 pustules, and 2/6 nodules/cysts; iter_029 found 6/6 nodules/cysts but with many nodule false positives.
+- Next mutations should not simply raise recall everywhere. Prefer research-backed ways to recover small comedone/pustule signal while reducing nodule/pustule false positives: gentler augmentation for tiny lesions, calibrated class-loss/oversampling balance, and avoiding settings that convert inflamed papules/pustules into nodule_cyst overcalls.
+"""
 
 
 def _timestamp() -> str:
@@ -241,21 +265,187 @@ def _summarize_rows(rows: list[dict[str, str]], limit: int) -> str:
     return "\n".join(summaries)
 
 
+def _format_metric_value(value: object) -> str:
+    try:
+        return f"{float(value):.4f}"
+    except (TypeError, ValueError):
+        return str(value) if value is not None else "n/a"
+
+
+def _format_metric_dict(metrics: dict | None) -> str:
+    if not metrics:
+        return "not recorded"
+    return ", ".join(f"{class_name}={_format_metric_value(metrics.get(class_name))}" for class_name in SCORED_CLASSES)
+
+
+def _read_text_if_exists(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8", errors="replace").strip()
+
+
+def _limit_text(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + f"\n[truncated after {max_chars} characters]"
+
+
+def _extract_codex_note(response_text: str | None) -> str:
+    if not response_text:
+        return "No Codex research note recorded."
+
+    diff_match = re.search(r"(?m)^(diff --git |--- )", response_text)
+    note = response_text[: diff_match.start()] if diff_match else response_text
+    note = note.replace("```diff", "").replace("```", "").strip()
+    note = re.sub(r"^RESEARCH_NOTE:\s*", "", note, flags=re.IGNORECASE).strip()
+    if not note:
+        return "No Codex research note recorded; this older prompt requested only a diff."
+    return _limit_text(note, MAX_CODEX_NOTE_CHARS)
+
+
+def _load_run_json(output_root: Path, run_id: str) -> dict | None:
+    experiment_row_path = output_root / run_id / "experiment_row.json"
+    if not experiment_row_path.exists():
+        return None
+    try:
+        return _read_json(experiment_row_path)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _row_metric(row: dict[str, str], experiment_row: dict | None, key: str) -> object:
+    if experiment_row is not None and key in experiment_row:
+        return experiment_row[key]
+    return row.get(key)
+
+
+def _interpret_experiment(row: dict[str, str], experiment_row: dict | None) -> str:
+    decision = row.get("decision", "")
+    reason = row.get("discard_reason", "") or ""
+    run_id = row.get("run_id", "")
+
+    if run_id.startswith("baseline_"):
+        return "Baseline reference row. Use it for comparison, not as a mutation to repeat."
+    if decision == "KEEP":
+        return "Kept by the held-out-primary rule. Future work should treat this as the new reference and preserve its locked_eval gains."
+    if "nodule_cyst recall" in reason:
+        return (
+            "Aggregate mAP moved in a useful direction, but the rare severe-class recall fell below the clinical floor. "
+            "Do not repeat this neighborhood unless the next mutation explicitly protects nodule_cyst recall."
+        )
+    if "improvement threshold not met" in reason:
+        return (
+            "The candidate passed the safety floor but did not improve enough. "
+            "Reuse only the promising parts and pair them with a stronger evidence-backed change."
+        )
+    if "diff_apply_failed" in reason or "missing_unified_diff" in reason:
+        return "Invalid Codex output rather than a model result. Avoid repeating malformed diff formatting."
+    if "SyntaxError" in reason:
+        return "The mutation produced invalid Python. The idea was not evaluated; keep future diffs syntactically minimal."
+    if reason.startswith("train_crash:"):
+        return "Training crashed before valid evaluation. Treat the implementation as unsafe unless the crash cause is directly fixed."
+    if reason.startswith("timeout_no_weights"):
+        return "Training did not produce usable weights inside the budget. Prefer smaller or faster variants."
+    if decision == "FAILED":
+        return "Failed before a valid keep-rule comparison. Inspect the failure reason before borrowing from this attempt."
+    if experiment_row is not None:
+        return "Evaluated normally. Compare per-class recalls and locked_eval movement before reusing the mutation."
+    return "No detailed run artifact was available for interpretation."
+
+
+def _format_experiment_memory(rows: list[dict[str, str]], output_root: Path) -> str:
+    if not rows:
+        return "No prior experiments yet."
+
+    total = len(rows)
+    sections: list[str] = []
+    for index, row in enumerate(rows, start=1):
+        run_id = row.get("run_id", f"row_{index}")
+        run_dir = output_root / run_id
+        experiment_row = _load_run_json(output_root, run_id)
+        codex_response = _read_text_if_exists(run_dir / "codex_response.txt")
+        diff_text = _read_text_if_exists(run_dir / "train.py.diff")
+
+        if diff_text is None:
+            if run_id.startswith("baseline_"):
+                tried_diff = "Baseline run; no Codex mutation diff."
+            else:
+                tried_diff = "No train.py.diff artifact recorded."
+        elif diff_text:
+            tried_diff = diff_text
+        else:
+            tried_diff = "Empty diff artifact."
+
+        locked_precision = experiment_row.get("locked_eval_per_class_precision") if experiment_row else None
+        locked_recall = experiment_row.get("locked_eval_per_class_recall") if experiment_row else None
+        research_precision = experiment_row.get("research_val_per_class_precision") if experiment_row else None
+        research_recall = experiment_row.get("research_val_per_class_recall") if experiment_row else None
+
+        sections.append(
+            "\n".join(
+                [
+                    f"Hydration {index}/{total}: {run_id}",
+                    f"- decision: {row.get('decision', '') or 'n/a'}",
+                    f"- discard_reason: {row.get('discard_reason', '') or '-'}",
+                    f"- research_val_scored_map50_95: {_format_metric_value(_row_metric(row, experiment_row, 'research_val_scored_map50_95'))}",
+                    f"- locked_eval_scored_map50_95: {_format_metric_value(_row_metric(row, experiment_row, 'locked_eval_scored_map50_95'))}",
+                    f"- locked_eval_nodule_cyst_recall: {_format_metric_value(_row_metric(row, experiment_row, 'locked_eval_nodule_cyst_recall'))}",
+                    f"- locked_eval_per_class_precision: {_format_metric_dict(locked_precision)}",
+                    f"- locked_eval_per_class_recall: {_format_metric_dict(locked_recall)}",
+                    f"- research_val_per_class_precision: {_format_metric_dict(research_precision)}",
+                    f"- research_val_per_class_recall: {_format_metric_dict(research_recall)}",
+                    f"- train_duration_seconds: {_format_metric_value(_row_metric(row, experiment_row, 'train_duration_seconds'))}",
+                    f"- timeout: {_row_metric(row, experiment_row, 'timeout')}",
+                    f"- crashed: {_row_metric(row, experiment_row, 'crashed')}",
+                    "- what Codex thought:",
+                    _extract_codex_note(codex_response),
+                    "- why the loop thinks it did or did not work:",
+                    _interpret_experiment(row, experiment_row),
+                    "- what was tried in src/train.py:",
+                    "```diff",
+                    tried_diff,
+                    "```",
+                ]
+            )
+        )
+
+    return "\n\n".join(sections)
+
+
 def _build_prompt(
     program_text: str,
     current_train_text: str,
     results_rows: list[dict[str, str]],
     reference_row: dict,
+    output_root: Path,
 ) -> str:
     return f"""You are mutating AutoDerm's src/train.py for one bounded autoresearch iteration.
 
-Return ONLY a unified diff against src/train.py. No prose, no markdown fences, no explanations.
+Return exactly:
+1. A single line starting with RESEARCH_NOTE: that explains in <=120 words which research prior or prior failure pattern motivated the mutation.
+2. A unified diff against src/train.py.
+
+Do not include markdown fences in your response. Do not include hidden chain-of-thought; the RESEARCH_NOTE is only a concise evidence-based rationale.
 
 Constraints:
 - Mutate only src/train.py.
 - Keep every tunable choice as top-level module constants.
 - Favor generalization under the held-out-primary rule.
 - Do not touch preprocessing, splits, or locked_eval integrity.
+- Do research-backed work only: each mutation must be connected to the research-backed priors below or to a measured failure in the full experiment memory.
+- Do not import outside training code or copy external implementations; keep src/train.py Codex-authored and bounded.
+
+Immediate operator priority:
+- Explore higher training image resolution for small acne lesion detection.
+- Prefer trying IMAGE_SIZE around 768 or 1024 soon, with BATCH_SIZE adjusted only if needed for A10G memory.
+- Preserve the clinical guardrails: locked_eval nodule_cyst recall must remain at least 0.50, and locked_eval remains the primary keep signal.
+- Keep the actual implementation as your own bounded src/train.py diff.
+
+Research-backed priors:
+{RESEARCH_BACKED_PRIORS}
+
+Manual diagnostic priorities:
+{MANUAL_DIAGNOSTIC_FINDINGS}
 
 Current reference metrics:
 - research_val_scored_map50_95: {reference_row.get("research_val_scored_map50_95")}
@@ -265,11 +455,8 @@ Current reference metrics:
 Program contract:
 {program_text}
 
-Last 10 results rows:
-{_summarize_rows(results_rows, 10)}
-
-Last 5 iteration summaries:
-{_summarize_rows(results_rows, 5)}
+Full experiment memory for this loop ({len(results_rows)} row(s), oldest to newest):
+{_format_experiment_memory(results_rows, output_root)}
 
 Current src/train.py:
 ```python
@@ -327,13 +514,55 @@ def _normalize_diff_path(path: str) -> str:
     return normalized
 
 
-def _apply_unified_diff(base_text: str, diff_text: str) -> str:
+def _diff_targets_only_train_py(diff_text: str) -> bool:
     diff_lines = diff_text.splitlines()
     file_paths = []
     for line in diff_lines:
         if line.startswith("--- ") or line.startswith("+++ "):
-            file_paths.append(_normalize_diff_path(line[4:]))
-    if not file_paths or any(path != "src/train.py" for path in file_paths):
+            path = _normalize_diff_path(line[4:])
+            if path != "/dev/null":
+                file_paths.append(path)
+    return bool(file_paths) and all(path == "src/train.py" for path in file_paths)
+
+
+def _apply_unified_diff_with_patch(base_text: str, diff_text: str) -> str:
+    if not _diff_targets_only_train_py(diff_text):
+        raise RuntimeError("diff must target only src/train.py")
+
+    last_error = ""
+    with tempfile.TemporaryDirectory(prefix="autoderm-diff-") as temp_dir:
+        temp_path = Path(temp_dir)
+        train_path = temp_path / "src" / "train.py"
+        train_path.parent.mkdir(parents=True, exist_ok=True)
+
+        for strip_components in (1, 0):
+            train_path.write_text(base_text, encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    "patch",
+                    f"-p{strip_components}",
+                    "--batch",
+                    "--forward",
+                    "--fuzz=3",
+                    "--no-backup-if-mismatch",
+                ],
+                input=diff_text,
+                cwd=temp_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode == 0:
+                patched_text = train_path.read_text(encoding="utf-8")
+                return patched_text if patched_text.endswith("\n") else patched_text + "\n"
+            last_error = (completed.stderr or completed.stdout).strip()
+
+    raise RuntimeError(f"diff apply failed with patch: {last_error}")
+
+
+def _apply_unified_diff_strict(base_text: str, diff_text: str) -> str:
+    diff_lines = diff_text.splitlines()
+    if not _diff_targets_only_train_py(diff_text):
         raise RuntimeError("diff must target only src/train.py")
 
     base_lines = base_text.splitlines()
@@ -393,6 +622,15 @@ def _apply_unified_diff(base_text: str, diff_text: str) -> str:
 
     output_lines.extend(base_lines[base_index:])
     return "\n".join(output_lines) + "\n"
+
+
+def _apply_unified_diff(base_text: str, diff_text: str) -> str:
+    try:
+        return _apply_unified_diff_strict(base_text, diff_text)
+    except RuntimeError as exc:
+        if str(exc) == "diff must target only src/train.py":
+            raise
+        return _apply_unified_diff_with_patch(base_text, diff_text)
 
 
 def _run_experiment(
@@ -488,7 +726,13 @@ def run_loop(
             iteration_dir.mkdir(parents=True, exist_ok=True)
 
             results_rows = _read_results_rows(results_path)
-            prompt = _build_prompt(program_text, current_train_text, results_rows, current_reference)
+            prompt = _build_prompt(
+                program_text=program_text,
+                current_train_text=current_train_text,
+                results_rows=results_rows,
+                reference_row=current_reference,
+                output_root=output_root_path,
+            )
             (iteration_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
 
             try:

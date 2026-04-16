@@ -4,6 +4,7 @@ import { useDropzone } from "react-dropzone";
 
 import Layout from "../components/Layout";
 import OverlayCanvas from "../components/OverlayCanvas";
+import OverlayLegend from "../components/OverlayLegend";
 import type { AnyClass, HayashiBadge, InferenceResponse } from "../lib/types";
 
 type DemoPhoto = {
@@ -61,12 +62,18 @@ function revokeSelection(selection: ImageSelection | null) {
 
 function demoPhotoLabel(fileName: string, index: number) {
   const labels: Record<string, string> = {
-    "levle0_151.jpg": "Level 0 sample 151",
-    "levle0_156.jpg": "Level 0 sample 156",
-    "levle0_491.jpg": "Level 0 sample 491",
-    "levle1_33.jpg": "Level 1 sample 33",
-    "levle1_129.jpg": "Level 1 sample 129",
-    "levle1_191.jpg": "Level 1 sample 191",
+    "fresh_single_01.png": "Fresh sample 1",
+    "fresh_single_02.png": "Fresh sample 2",
+    "fresh_pair_01_before.png": "Pair 1 before",
+    "fresh_pair_01_after.png": "Pair 1 after",
+    "fresh_pair_02_before.png": "Pair 2 before",
+    "fresh_pair_02_after.png": "Pair 2 after",
+    "fresh_pair_03_view_a.png": "Pair 3 view A",
+    "fresh_pair_03_view_b.png": "Pair 3 view B",
+    "fresh_pair_04_before.png": "Pair 4 before",
+    "fresh_pair_04_after.png": "Pair 4 after",
+    "fresh_pair_05_before.png": "Pair 5 before",
+    "fresh_pair_05_after.png": "Pair 5 after",
   };
   return labels[fileName] ?? `Sample ${index + 1}`;
 }
@@ -190,7 +197,7 @@ function SampleButtons({
         </div>
       ) : (
         <p className="rounded-md border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-600">
-          Sample photos will appear here when the curated demo images are added.
+          Sample photos will appear here when fresh demo images are added.
         </p>
       )}
       {error ? <ErrorState message={error} /> : null}
@@ -438,7 +445,7 @@ export default function PatientPage({ demoPhotos }: PatientPageProps) {
   const hasResult = useMemo(() => Boolean(selection && response), [response, selection]);
 
   return (
-    <Layout activeTab="patient">
+    <Layout activeTab="patient" pageTitle="AutoDerm — Patient">
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-semibold tracking-normal text-stone-950">
@@ -455,7 +462,10 @@ export default function PatientPage({ demoPhotos }: PatientPageProps) {
 
         {hasResult && selection && response ? (
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
-            <OverlayCanvas imageUrl={selection.url} detections={response.detections} />
+            <div className="space-y-3">
+              <OverlayCanvas imageUrl={selection.url} detections={response.detections} labelMode="patient" />
+              <OverlayLegend mode="patient" />
+            </div>
             <ResultSections response={response} />
           </div>
         ) : null}

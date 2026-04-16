@@ -1,19 +1,24 @@
-# Demo Photo License Notes
+# Demo Photo Notes
 
-These demo photos are operator-selected public ACNE04 samples distributed with the LDL project:
+These demo photos are operator-approved, edited, anonymized clinical examples
+for the AutoDerm hackathon demo. They were not used during training,
+research_val, or locked_eval evaluation.
 
-- Dataset/code page: https://github.com/xpwu95/LDL
-- Paper: "Joint Acne Image Grading and Counting via Label Distribution Learning", ICCV 2019.
-
-The upstream LDL README states that ACNE04 is free for academic usage and asks users to contact Xiaoping Wu for other purposes. These images are included here only for this research demo and hackathon judging context.
-
-Do not add other acne photos to this directory without explicit operator approval.
+Only sanitized, non-identifying filenames are kept in this directory. Do not add
+original export filenames, patient identifiers, PHI, or unapproved clinical
+photos here.
 
 Selected files:
 
-- `levle0_151.jpg`
-- `levle0_156.jpg`
-- `levle0_491.jpg`
-- `levle1_33.jpg`
-- `levle1_129.jpg`
-- `levle1_191.jpg`
+- `fresh_single_01.png`
+- `fresh_single_02.png`
+- `fresh_pair_01_before.png`
+- `fresh_pair_01_after.png`
+- `fresh_pair_02_before.png`
+- `fresh_pair_02_after.png`
+- `fresh_pair_03_view_a.png`
+- `fresh_pair_03_view_b.png`
+- `fresh_pair_04_before.png`
+- `fresh_pair_04_after.png`
+- `fresh_pair_05_before.png`
+- `fresh_pair_05_after.png`

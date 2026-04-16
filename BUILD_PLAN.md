@@ -158,7 +158,7 @@ These are TRACKED (not gitignored) so judges can understand the project from the
 
 | Path | What | Why tracked |
 |------|------|-------------|
-| `web/public/demo_photos/` | 3-4 ACNE04 dataset images + LICENSE.md | Public research dataset, powers "Try a sample" buttons |
+| `web/public/demo_photos/` | Operator-approved anonymized demo images + notes | Fresh, non-training samples for "Try a sample" buttons |
 | `docs/sample_results/` | Curated iteration examples (TSV rows, experiment_row, diff, prompt, baseline_summary) | Shows what the loop produces without needing full dataset |
 | `config/active_checkpoint.example.json` | Schema template | Shows judges the expected config format |
 | `docs/program.md` | The loop contract | The held-out-primary keep rule specification |

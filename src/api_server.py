@@ -6,12 +6,13 @@ import csv
 import io
 import json
 import math
+import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -29,6 +30,7 @@ NO_ACTIVE_CHECKPOINT = {
     "message": "Baselines may still be running. Check Research tab.",
 }
 VALID_PREPROCESSING = {"uncropped", "cropped"}
+RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 
 
 app = FastAPI(title="AutoDerm Demo API")
@@ -57,6 +59,22 @@ class ModelCache:
     model: object | None = None
 
 
+@dataclass(frozen=True)
+class IterationCheckpointResolution:
+    run_id: str
+    run_dir: Path
+    weights_path: Path | None
+    weights_path_raw: str | None
+    weight_file: str | None
+    preprocessing: str | None
+    row: dict[str, Any]
+    unusable_reason: str | None
+
+    @property
+    def usable(self) -> bool:
+        return self.unusable_reason is None and self.weights_path is not None and self.preprocessing is not None
+
+
 _MODEL_CACHE = ModelCache()
 _MODEL_LOCK = threading.Lock()
 
@@ -66,6 +84,21 @@ def _resolve_repo_path(raw_path: str) -> Path:
     if not path.is_absolute():
         path = REPO_ROOT / path
     return path.resolve()
+
+
+def _repo_relative_path(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(resolved)
+
+
+def _read_hash(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    value = path.read_text(encoding="utf-8", errors="replace").strip()
+    return value or None
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -402,6 +435,228 @@ def _iteration_row_from_results(run_id: str) -> dict[str, Any] | None:
     return None
 
 
+def _merge_row(primary: dict[str, Any] | None, fallback: dict[str, Any] | None) -> dict[str, Any]:
+    merged = dict(fallback or {})
+    for key, value in (primary or {}).items():
+        if value not in ("", None):
+            merged[key] = value
+        elif key not in merged:
+            merged[key] = value
+    return merged
+
+
+def _row_for_run(run_id: str, run_dir: Path | None = None) -> dict[str, Any]:
+    run_dir = run_dir or _safe_run_dir(run_id)
+    row_path = run_dir / "experiment_row.json"
+    json_row = _read_json(row_path) if row_path.exists() else None
+    result_row = _iteration_row_from_results(run_id)
+    return _merge_row(json_row, result_row)
+
+
+def _safe_run_dir(run_id: str) -> Path:
+    clean = run_id.strip()
+    if clean != run_id or not RUN_ID_PATTERN.fullmatch(clean):
+        raise HTTPException(status_code=400, detail=f"invalid iteration_id: {run_id}")
+
+    runs_root = RUNS_DIR.resolve()
+    run_dir = (RUNS_DIR / clean).resolve()
+    if run_dir.parent != runs_root:
+        raise HTTPException(status_code=400, detail=f"invalid iteration_id: {run_id}")
+    return run_dir
+
+
+def _preprocessing_hash_candidates(preprocessing: str) -> list[Path]:
+    return [
+        REPO_ROOT / "data" / preprocessing / "preprocessing_hash.txt",
+        RUNS_DIR / f"baseline_{preprocessing}" / "weights" / "preprocessing_hash.txt",
+        RUNS_DIR / f"baseline_{preprocessing}" / "experiment_row.json",
+    ]
+
+
+def _hash_from_candidate(path: Path) -> str | None:
+    if path.suffix == ".json":
+        payload = _read_json(path)
+        value = payload.get("preprocessing_hash") if payload else None
+        return str(value).strip() if value else None
+    return _read_hash(path)
+
+
+def _known_preprocessing_hashes() -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for preprocessing in VALID_PREPROCESSING:
+        for path in _preprocessing_hash_candidates(preprocessing):
+            preprocessing_hash = _hash_from_candidate(path)
+            if preprocessing_hash:
+                hashes[preprocessing_hash] = preprocessing
+    return hashes
+
+
+def _weights_path_for_run(run_dir: Path) -> tuple[Path | None, str | None]:
+    weights_dir = run_dir / "weights"
+    for file_name in ("best.pt", "last.pt"):
+        weights_path = weights_dir / file_name
+        if weights_path.exists():
+            return weights_path.resolve(), file_name
+    return None, None
+
+
+def _preprocessing_for_resolution(
+    run_id: str,
+    row: dict[str, Any],
+    weights_path: Path | None,
+) -> tuple[str | None, str | None]:
+    candidates: list[tuple[str, str]] = []
+    hash_to_preprocessing = _known_preprocessing_hashes()
+
+    row_preprocessing = row.get("preprocessing")
+    if row_preprocessing:
+        if str(row_preprocessing) not in VALID_PREPROCESSING:
+            return None, f"unknown preprocessing value: {row_preprocessing}"
+        candidates.append(("row.preprocessing", str(row_preprocessing)))
+
+    if run_id.startswith("baseline_"):
+        baseline_preprocessing = run_id.removeprefix("baseline_")
+        if baseline_preprocessing in VALID_PREPROCESSING:
+            candidates.append(("run_id", baseline_preprocessing))
+
+    if weights_path is not None:
+        weights_hash = _read_hash(weights_path.parent / "preprocessing_hash.txt")
+        if not weights_hash:
+            return None, "missing weights preprocessing hash"
+        weights_preprocessing = hash_to_preprocessing.get(weights_hash)
+        if weights_preprocessing is None:
+            return None, f"unknown preprocessing hash: {weights_hash}"
+        candidates.append(("weights.preprocessing_hash", weights_preprocessing))
+
+    row_hash = row.get("preprocessing_hash")
+    if row_hash:
+        row_hash_preprocessing = hash_to_preprocessing.get(str(row_hash))
+        if row_hash_preprocessing is not None:
+            candidates.append(("row.preprocessing_hash", row_hash_preprocessing))
+
+    values = {preprocessing for _, preprocessing in candidates}
+    if len(values) > 1:
+        sources = ", ".join(f"{source}={preprocessing}" for source, preprocessing in candidates)
+        return None, f"preprocessing mismatch: {sources}"
+    if values:
+        return next(iter(values)), None
+    return None, "unknown preprocessing"
+
+
+def _resolve_iteration_checkpoint(run_id: str) -> IterationCheckpointResolution:
+    run_dir = _safe_run_dir(run_id)
+    row = _row_for_run(run_id, run_dir)
+    weights_path, weight_file = _weights_path_for_run(run_dir)
+    weights_path_raw = _repo_relative_path(weights_path) if weights_path is not None else None
+
+    if not run_dir.exists():
+        return IterationCheckpointResolution(
+            run_id=run_id,
+            run_dir=run_dir,
+            weights_path=weights_path,
+            weights_path_raw=weights_path_raw,
+            weight_file=weight_file,
+            preprocessing=None,
+            row=row,
+            unusable_reason="run directory missing",
+        )
+
+    if weights_path is None:
+        return IterationCheckpointResolution(
+            run_id=run_id,
+            run_dir=run_dir,
+            weights_path=None,
+            weights_path_raw=None,
+            weight_file=None,
+            preprocessing=None,
+            row=row,
+            unusable_reason="missing weights",
+        )
+
+    preprocessing, preprocessing_error = _preprocessing_for_resolution(run_id, row, weights_path)
+    return IterationCheckpointResolution(
+        run_id=run_id,
+        run_dir=run_dir,
+        weights_path=weights_path,
+        weights_path_raw=weights_path_raw,
+        weight_file=weight_file,
+        preprocessing=preprocessing,
+        row=row,
+        unusable_reason=preprocessing_error,
+    )
+
+
+def _float_from_any(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value) if value not in ("", None) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _checkpoint_option_payload(resolution: IterationCheckpointResolution) -> dict[str, Any]:
+    row = resolution.row
+    decision = str(row.get("decision") or "PENDING_KEEP_RULE")
+    return {
+        "run_id": resolution.run_id,
+        "decision": decision,
+        "discard_reason": row.get("discard_reason") or None,
+        "timestamp": row.get("timestamp", ""),
+        "research_val_scored_map50_95": _float_from_any(row.get("research_val_scored_map50_95")),
+        "locked_eval_scored_map50_95": _float_from_any(row.get("locked_eval_scored_map50_95")),
+        "locked_eval_nodule_cyst_recall": _float_from_any(row.get("locked_eval_nodule_cyst_recall")),
+        "preprocessing": resolution.preprocessing,
+        "weights_path": resolution.weights_path_raw,
+        "weight_file": resolution.weight_file,
+        "weights_exists": resolution.weights_path is not None,
+        "usable": resolution.usable,
+        "unusable_reason": resolution.unusable_reason,
+        "official_keep": decision == "KEEP",
+        "exploratory_only": decision != "KEEP",
+    }
+
+
+def _checkpoint_for_iteration(run_id: str) -> ActiveCheckpoint:
+    resolution = _resolve_iteration_checkpoint(run_id)
+    if not resolution.usable or resolution.weights_path is None or resolution.preprocessing is None:
+        reason = resolution.unusable_reason or "not usable"
+        raise HTTPException(status_code=400, detail=f"iteration {run_id} is not usable: {reason}")
+
+    return ActiveCheckpoint(
+        weights_path=resolution.weights_path,
+        weights_path_raw=resolution.weights_path_raw or str(resolution.weights_path),
+        preprocessing=resolution.preprocessing,
+        iteration_id=run_id,
+        config_mtime=resolution.weights_path.stat().st_mtime,
+    )
+
+
+def _all_checkpoint_options() -> list[dict[str, Any]]:
+    run_ids = {str(row.get("run_id")) for row in _iterations() if row.get("run_id")}
+    if RUNS_DIR.exists():
+        run_ids.update(
+            path.name
+            for path in RUNS_DIR.iterdir()
+            if path.is_dir() and (path.name.startswith("iter_") or path.name.startswith("baseline_"))
+        )
+
+    options = [_checkpoint_option_payload(_resolve_iteration_checkpoint(run_id)) for run_id in run_ids]
+    return sorted(
+        options,
+        key=lambda option: (
+            str(option.get("timestamp") or ""),
+            str(option.get("run_id") or ""),
+        ),
+        reverse=True,
+    )
+
+
+def _counts_diff(after: dict[str, Any], before: dict[str, Any]) -> dict[str, int]:
+    return {
+        class_name: int(after["counts"].get(class_name, 0)) - int(before["counts"].get(class_name, 0))
+        for class_name in ALL_CLASSES
+    }
+
+
 def _read_text(path: Path) -> str:
     if not path.exists():
         return ""
@@ -425,9 +680,14 @@ def iterations() -> list[dict[str, Any]]:
     return _iterations()
 
 
+@app.get("/api/inference_checkpoints")
+def inference_checkpoints() -> list[dict[str, Any]]:
+    return _all_checkpoint_options()
+
+
 @app.get("/api/iteration/{run_id}")
 def iteration_detail(run_id: str) -> dict[str, Any]:
-    run_dir = RUNS_DIR / run_id
+    run_dir = _safe_run_dir(run_id)
     row_path = run_dir / "experiment_row.json"
     experiment_row = _read_json(row_path) if row_path.exists() else _iteration_row_from_results(run_id)
     if experiment_row is None and not run_dir.exists():
@@ -443,12 +703,48 @@ def iteration_detail(run_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/infer")
-async def infer(image: UploadFile = File(...)) -> Any:
-    checkpoint = _active_checkpoint_for_inference()
-    if checkpoint is None:
-        return _no_active_checkpoint_response()
+async def infer(
+    image: UploadFile = File(...),
+    iteration_id: str | None = Form(None),
+) -> Any:
+    if iteration_id:
+        checkpoint = _checkpoint_for_iteration(iteration_id)
+    else:
+        checkpoint = _active_checkpoint_for_inference()
+        if checkpoint is None:
+            return _no_active_checkpoint_response()
     upload_image = await _read_upload_image(image)
     return _inference_response(upload_image, checkpoint)
+
+
+@app.post("/api/compare_iterations")
+async def compare_iterations(
+    image: UploadFile = File(...),
+    iteration_a: str = Form(...),
+    iteration_b: str = Form(...),
+) -> Any:
+    checkpoint_a = _checkpoint_for_iteration(iteration_a)
+    checkpoint_b = _checkpoint_for_iteration(iteration_b)
+    upload_image = await _read_upload_image(image)
+
+    response_a = _inference_response(upload_image, checkpoint_a)
+    response_b = _inference_response(upload_image, checkpoint_b)
+    resolution_a = _resolve_iteration_checkpoint(iteration_a)
+    resolution_b = _resolve_iteration_checkpoint(iteration_b)
+
+    return {
+        "iteration_a": _checkpoint_option_payload(resolution_a),
+        "iteration_b": _checkpoint_option_payload(resolution_b),
+        "a": response_a,
+        "b": response_b,
+        "deltas": {
+            "counts_diff": _counts_diff(response_b, response_a),
+            "badge_change": {
+                "from": response_a["hayashi_badge"],
+                "to": response_b["hayashi_badge"],
+            },
+        },
+    }
 
 
 @app.post("/api/infer_pair")
@@ -462,15 +758,11 @@ async def infer_pair(
 
     before_response = _inference_response(await _read_upload_image(before), checkpoint)
     after_response = _inference_response(await _read_upload_image(after), checkpoint)
-    counts_diff = {
-        class_name: after_response["counts"].get(class_name, 0) - before_response["counts"].get(class_name, 0)
-        for class_name in ALL_CLASSES
-    }
     return {
         "before": before_response,
         "after": after_response,
         "deltas": {
-            "counts_diff": counts_diff,
+            "counts_diff": _counts_diff(after_response, before_response),
             "badge_change": {
                 "from": before_response["hayashi_badge"],
                 "to": after_response["hayashi_badge"],

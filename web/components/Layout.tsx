@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Head from "next/head";
 import { useRouter } from "next/router";
 import type { ReactNode } from "react";
 
@@ -7,6 +8,7 @@ type TabId = "doctor" | "patient" | "research";
 type LayoutProps = {
   activeTab?: TabId;
   children: ReactNode;
+  pageTitle?: string;
 };
 
 const tabs: Array<{ id: TabId; label: string; href: string }> = [
@@ -15,7 +17,7 @@ const tabs: Array<{ id: TabId; label: string; href: string }> = [
   { id: "research", label: "Research", href: "/research" },
 ];
 
-export default function Layout({ activeTab, children }: LayoutProps) {
+export default function Layout({ activeTab, children, pageTitle = "AutoDerm" }: LayoutProps) {
   const router = useRouter();
   const selectedTab =
     activeTab ??
@@ -23,6 +25,9 @@ export default function Layout({ activeTab, children }: LayoutProps) {
 
   return (
     <div className="min-h-screen bg-[#f8faf6] text-stone-950">
+      <Head>
+        <title>{pageTitle}</title>
+      </Head>
       <header className="sticky top-0 z-20 border-b border-stone-200 bg-[#f8faf6]/95 backdrop-blur">
         <div className="mx-auto flex min-h-16 w-full max-w-6xl flex-col gap-3 px-4 py-3 sm:px-6 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-wrap items-center gap-4">
